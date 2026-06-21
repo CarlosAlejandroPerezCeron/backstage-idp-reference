@@ -1,0 +1,55 @@
+app:
+  baseUrl: https://idp.infravix.io
+
+backend:
+  baseUrl: https://idp-api.infravix.io
+  listen:
+    port: 7007
+    host: 0.0.0.0
+  database:
+    client: pg
+    connection:
+      host: ${POSTGRES_HOST}
+      port: 5432
+      user: ${POSTGRES_USER}
+      password: ${POSTGRES_PASSWORD}
+      database: backstage_production
+      ssl:
+        require: true
+        rejectUnauthorized: true
+  cache:
+    store: redis
+    connection: ${REDIS_URL}
+
+auth:
+  environment: production
+  providers:
+    github:
+      production:
+        clientId: ${AUTH_GITHUB_CLIENT_ID}
+        clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
+        signIn:
+          resolvers:
+            - resolver: usernameMatchingUserEntityName
+            - resolver: emailMatchingUserEntityProfileEmail
+
+techdocs:
+  publisher:
+    type: 'awsS3'
+    awsS3:
+      bucketName: infravix-idp-techdocs-prod
+      region: us-east-1
+      accountId: ${AWS_ACCOUNT_ID}
+      sse: 'aws:kms'
+
+catalog:
+  processingInterval: { minutes: 10 }
+  locations:
+    - type: url
+      target: https://github.com/${GITHUB_ORG}/platform-catalog/blob/main/index.yaml
+
+reading:
+  allow:
+    - host: '*.infravix.io'
+    - host: 'github.com'
+    - host: '*.amazonaws.com'

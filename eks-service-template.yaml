@@ -1,0 +1,219 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: eks-service-template
+  title: New EKS Microservice
+  description: >
+    Provisions a production-ready microservice on EKS with GitHub repo,
+    ArgoCD Application, Datadog APM, HPA, PDB, and CI/CD pipeline.
+  tags:
+    - platform
+    - eks
+    - recommended
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+spec:
+  owner: platform-engineering
+  type: service
+
+  parameters:
+    - title: Service Identity
+      required: [name, owner, system, description]
+      properties:
+        name:
+          title: Service Name
+          type: string
+          description: Unique name for this service (lowercase, hyphens only)
+          pattern: '^[a-z][a-z0-9-]{2,50}$'
+          ui:autofocus: true
+        description:
+          title: Description
+          type: string
+          description: What does this service do?
+        owner:
+          title: Owning Team
+          type: string
+          description: Team that owns this service
+          ui:field: OwnerPicker
+          ui:options:
+            allowedKinds: [Group]
+        system:
+          title: System
+          type: string
+          description: Which system does this service belong to?
+          ui:field: EntityPicker
+          ui:options:
+            allowedKinds: [System]
+        lifecycle:
+          title: Lifecycle
+          type: string
+          default: production
+          enum: [experimental, production, deprecated]
+
+    - title: Runtime Configuration
+      properties:
+        language:
+          title: Language / Framework
+          type: string
+          default: python-fastapi
+          enum:
+            - python-fastapi
+            - node-express
+            - go-gin
+            - java-spring
+          enumNames:
+            - Python (FastAPI)
+            - Node.js (Express)
+            - Go (Gin)
+            - Java (Spring Boot)
+        replicaCount:
+          title: Initial Replicas
+          type: integer
+          default: 2
+          minimum: 1
+          maximum: 10
+        resources:
+          title: Resource Requests
+          type: object
+          properties:
+            cpuRequest:
+              title: CPU Request
+              type: string
+              default: '250m'
+            memoryRequest:
+              title: Memory Request
+              type: string
+              default: '256Mi'
+            cpuLimit:
+              title: CPU Limit
+              type: string
+              default: '1000m'
+            memoryLimit:
+              title: Memory Limit
+              type: string
+              default: '512Mi'
+        enableHPA:
+          title: Enable Horizontal Pod Autoscaler
+          type: boolean
+          default: true
+        hpaMinReplicas:
+          title: HPA Min Replicas
+          type: integer
+          default: 2
+          ui:widget: hidden
+        hpaMaxReplicas:
+          title: HPA Max Replicas
+          type: integer
+          default: 10
+          ui:widget: hidden
+
+    - title: Observability
+      properties:
+        enableDatadog:
+          title: Enable Datadog APM
+          type: boolean
+          default: true
+        enableStructuredLogging:
+          title: Structured JSON Logging
+          type: boolean
+          default: true
+        sloTarget:
+          title: Availability SLO Target (%)
+          type: number
+          default: 99.9
+
+    - title: GitHub Configuration
+      required: [repoOrg]
+      properties:
+        repoOrg:
+          title: GitHub Organization
+          type: string
+          default: CarlosAlejandroPerezCeron
+        visibility:
+          title: Repository Visibility
+          type: string
+          default: private
+          enum: [public, private]
+        defaultBranch:
+          title: Default Branch
+          type: string
+          default: main
+
+  steps:
+    - id: fetch-base
+      name: Fetch Base Template
+      action: fetch:template
+      input:
+        url: ./skeleton/${{ parameters.language }}
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          system: ${{ parameters.system }}
+          replicaCount: ${{ parameters.replicaCount }}
+          cpuRequest: ${{ parameters.resources.cpuRequest }}
+          memoryRequest: ${{ parameters.resources.memoryRequest }}
+          cpuLimit: ${{ parameters.resources.cpuLimit }}
+          memoryLimit: ${{ parameters.resources.memoryLimit }}
+          enableHPA: ${{ parameters.enableHPA }}
+          hpaMinReplicas: ${{ parameters.hpaMinReplicas }}
+          hpaMaxReplicas: ${{ parameters.hpaMaxReplicas }}
+          enableDatadog: ${{ parameters.enableDatadog }}
+          sloTarget: ${{ parameters.sloTarget }}
+
+    - id: create-github-repo
+      name: Create GitHub Repository
+      action: publish:github
+      input:
+        repoUrl: github.com?repo=${{ parameters.name }}&owner=${{ parameters.repoOrg }}
+        description: ${{ parameters.description }}
+        visibility: ${{ parameters.visibility }}
+        defaultBranch: ${{ parameters.defaultBranch }}
+        gitCommitMessage: "feat: initial service scaffold via Backstage IDP"
+        topics:
+          - backstage
+          - eks
+          - platform-managed
+        repoVariables:
+          SERVICE_NAME: ${{ parameters.name }}
+          OWNER_TEAM: ${{ parameters.owner }}
+        collaborators:
+          - team: platform-engineering
+            access: admin
+
+    - id: register-catalog
+      name: Register in Software Catalog
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['create-github-repo'].output.repoContentsUrl }}
+        catalogInfoPath: /catalog-info.yaml
+
+    - id: create-argocd-app
+      name: Create ArgoCD Application
+      action: argocd:create-resources
+      input:
+        appName: ${{ parameters.name }}
+        argoInstance: production-eks
+        namespace: ${{ parameters.name }}
+        repoUrl: ${{ steps['create-github-repo'].output.remoteUrl }}
+        path: kubernetes
+        targetRevision: main
+        project: platform
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['create-github-repo'].output.remoteUrl }}
+      - title: Open in Catalog
+        icon: catalog
+        entityRef: ${{ steps['register-catalog'].output.entityRef }}
+      - title: ArgoCD Application
+        url: ${{ steps['create-argocd-app'].output.argocdAppUrl }}
+    text:
+      - title: Next Steps
+        content: |
+          Service **${{ parameters.name }}** is live. Next steps:
+          1. Clone the repo and add your application code
+          2. Set required environment secrets in GitHub Actions
+          3. Push to `main` to trigger the first ArgoCD sync
+          4. Monitor deployment in ArgoCD and Datadog
